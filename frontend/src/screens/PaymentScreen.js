@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -35,6 +35,7 @@ const convertNprToInr = (nprAmount) => Number((Number(nprAmount || 0) * NPR_TO_I
 const roundToTwo = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
 
 const PaymentScreen = ({ navigation, route }) => {
+  const esewaCallbackHandledRef = useRef(false);
   const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
   const [userEmail, setUserEmail] = useState('');
 
@@ -417,6 +418,52 @@ const PaymentScreen = ({ navigation, route }) => {
     token: null,
     error: null
   });
+
+  const normalizeCallbackUrl = (url) => {
+    if (!url || typeof url !== 'string') return '';
+    return url.trim();
+  };
+
+  const isConfiguredCallbackMatch = (url, configuredUrl) => {
+    if (!url || !configuredUrl) return false;
+
+    const normalizedUrl = normalizeCallbackUrl(url);
+    const normalizedConfigured = normalizeCallbackUrl(configuredUrl).replace(/\/$/, '');
+
+    return (
+      normalizedUrl === normalizedConfigured ||
+      normalizedUrl.startsWith(`${normalizedConfigured}/`) ||
+      normalizedUrl.startsWith(`${normalizedConfigured}?`)
+    );
+  };
+
+  const isEsewaSuccessCallbackUrl = (url) => {
+    const normalizedUrl = normalizeCallbackUrl(url);
+    const configuredSuccessUrl = showWebView.paymentData?.form?.params?.success_url;
+
+    return (
+      normalizedUrl.startsWith('esewa://payment/success/') ||
+      isConfiguredCallbackMatch(normalizedUrl, configuredSuccessUrl) ||
+      /https?:\/\/(www\.)?gogantabya\.com\/payment\/esewa\/success(?:\/|\?|$)/i.test(normalizedUrl)
+    );
+  };
+
+  const isEsewaFailureCallbackUrl = (url) => {
+    const normalizedUrl = normalizeCallbackUrl(url);
+    const configuredFailureUrl = showWebView.paymentData?.form?.params?.failure_url;
+
+    return (
+      normalizedUrl.startsWith('esewa://payment/failure/') ||
+      isConfiguredCallbackMatch(normalizedUrl, configuredFailureUrl) ||
+      /https?:\/\/(www\.)?gogantabya\.com\/payment\/esewa\/failure(?:\/|\?|$)/i.test(normalizedUrl)
+    );
+  };
+
+  const resetEsewaFlowState = () => {
+    esewaCallbackHandledRef.current = false;
+    setShowWebView({ visible: false, html: '', uri: null, paymentData: null, token: null, error: null });
+    setPaymentLoading(false);
+  };
   
   const paymentMethods = [
     { id: 'RAZORPAY', label: 'Razorpay' },
@@ -429,6 +476,38 @@ const PaymentScreen = ({ navigation, route }) => {
   const totalAmountNpr = displayAmountNpr;
   const totalAmountInr = displayAmountInr;
   const couponDiscountInr = convertNprToInr(couponDiscount);
+
+  useEffect(() => {
+    const handleDeepLink = ({ url }) => {
+      if (!url) return;
+
+      console.log('🔵 Deep link received:', url);
+      if (isEsewaSuccessCallbackUrl(url)) {
+        handleEsewaSuccess(url);
+        return;
+      }
+
+      if (isEsewaFailureCallbackUrl(url)) {
+        handleEsewaFailure(url);
+      }
+    };
+
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    Linking.getInitialURL()
+      .then((initialUrl) => {
+        if (initialUrl && (isEsewaSuccessCallbackUrl(initialUrl) || isEsewaFailureCallbackUrl(initialUrl))) {
+          handleDeepLink({ url: initialUrl });
+        }
+      })
+      .catch((error) => {
+        console.log('Initial deep link check failed:', error?.message || error);
+      });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [showWebView.paymentData, showWebView.token]);
 
   const applyCoupon = async () => {
     if (!couponCode.trim()) {
@@ -888,6 +967,7 @@ const PaymentScreen = ({ navigation, route }) => {
 
   const handleEsewaPayment = async (paymentData, token) => {
     try {
+      esewaCallbackHandledRef.current = false;
       console.log('🔵 Starting eSewa payment with data:', JSON.stringify(paymentData, null, 2));
       setDebugMessage(`Starting eSewa...\nPayment ID: ${paymentData.paymentId}\nAmount: ${paymentData.amount}`);
       
@@ -1054,24 +1134,15 @@ const PaymentScreen = ({ navigation, route }) => {
     console.log('🔵 WebView URL intercept:', url);
     setDebugMessage(`Intercepted: ${url.substring(0, 100)}...`);
 
-    const configuredSuccessUrl = showWebView.paymentData?.form?.params?.success_url;
-    const configuredFailureUrl = showWebView.paymentData?.form?.params?.failure_url;
-
     // Check for success URL
-    if (
-      url.startsWith('esewa://payment/success/') ||
-      (configuredSuccessUrl && url.startsWith(configuredSuccessUrl))
-    ) {
+    if (isEsewaSuccessCallbackUrl(url)) {
       console.log('✅ eSewa SUCCESS intercepted!');
       handleEsewaSuccess(url);
       return false; // Don't load this URL
     }
 
     // Check for failure URL
-    if (
-      url.startsWith('esewa://payment/failure/') ||
-      (configuredFailureUrl && url.startsWith(configuredFailureUrl))
-    ) {
+    if (isEsewaFailureCallbackUrl(url)) {
       console.log('❌ eSewa FAILURE intercepted!');
       handleEsewaFailure(url);
       return false; // Don't load this URL
@@ -1083,6 +1154,11 @@ const PaymentScreen = ({ navigation, route }) => {
 
   // Handle successful eSewa payment
   const handleEsewaSuccess = async (url) => {
+    if (esewaCallbackHandledRef.current) {
+      console.log('🔵 eSewa success callback already handled, skipping duplicate:', url);
+      return;
+    }
+    esewaCallbackHandledRef.current = true;
     setDebugMessage(`Processing success: ${url}`);
     
     try {
@@ -1135,8 +1211,7 @@ const PaymentScreen = ({ navigation, route }) => {
           const emailNote = await getEmailStatusNote();
 
           // Close WebView after confirmation
-                setShowWebView({ visible: false, html: '', uri: null, paymentData: null, token: null, error: null });
-          setPaymentLoading(false);
+          resetEsewaFlowState();
           setDebugMessage(null);
 
           // Redirect automatically to Home after payment success
@@ -1153,8 +1228,7 @@ const PaymentScreen = ({ navigation, route }) => {
           console.error('❌ Booking confirmation failed after eSewa verification:', confirmError);
 
           // Close WebView even if confirm fails
-                  setShowWebView({ visible: false, html: '', uri: null, paymentData: null, token: null, error: null });
-          setPaymentLoading(false);
+          resetEsewaFlowState();
           setDebugMessage(`Confirmation failed: ${confirmError.message}`);
 
           Alert.alert(
@@ -1167,8 +1241,7 @@ const PaymentScreen = ({ navigation, route }) => {
       }
 
       // Close WebView after verification
-                setShowWebView({ visible: false, html: '', uri: null, paymentData: null, token: null, error: null });
-      setPaymentLoading(false);
+      resetEsewaFlowState();
 
       // Verification failed - show error, don't navigate to bookings
       setDebugMessage(`Verification failed: ${JSON.stringify(verificationResponse)}`);
@@ -1179,8 +1252,7 @@ const PaymentScreen = ({ navigation, route }) => {
       );
     } catch (error) {
       console.error('❌ Error handling success:', error);
-      setShowWebView({ visible: false, html: '', uri: null, paymentData: null, token: null, error: null });
-      setPaymentLoading(false);
+      resetEsewaFlowState();
       setDebugMessage(`Error: ${error.message}\n\nStack: ${error.stack}`);
       Alert.alert('Error', `Payment error: ${error.message}`, [{ text: 'OK' }]);
     }
@@ -1189,6 +1261,7 @@ const PaymentScreen = ({ navigation, route }) => {
   // Handle failed eSewa payment
   const handleEsewaFailure = (url) => {
     console.log('❌ eSewa payment failed:', url);
+    esewaCallbackHandledRef.current = true;
     let paymentId = null;
     try {
       const urlObj = new URL(url.replace('esewa://', 'https://esewa-callback/'));
@@ -1197,8 +1270,7 @@ const PaymentScreen = ({ navigation, route }) => {
       // ignore
     }
     setDebugMessage(`Payment Failed for ${paymentId || 'unknown'}:\n${url}`);
-    setShowWebView({ visible: false, html: '', uri: null, paymentData: null, token: null, error: null });
-    setPaymentLoading(false);
+    resetEsewaFlowState();
     Alert.alert('Payment Failed', 'Your eSewa payment was not completed. Please try again.', [{ text: 'OK' }]);
   };
 
@@ -1208,14 +1280,14 @@ const PaymentScreen = ({ navigation, route }) => {
     console.log('🔵 eSewa WebView navigation:', { url, loading, title });
 
     // Backup check for success (in case intercept doesn't catch it)
-    if (url && (url.includes('esewa://payment/success') || url.includes('/payment/esewa/success'))) {
+    if (url && isEsewaSuccessCallbackUrl(url)) {
       console.log('✅ eSewa payment success detected at URL:', url);
       handleEsewaSuccess(url);
       return;
     }
     
     // Backup check for failure
-    if (url && (url.includes('esewa://payment/failure') || url.includes('/payment/esewa/failure'))) {
+    if (url && isEsewaFailureCallbackUrl(url)) {
       console.log('❌ eSewa payment failed at URL:', url);
       handleEsewaFailure(url);
       return;

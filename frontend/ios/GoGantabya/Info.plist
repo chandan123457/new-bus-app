@@ -28,6 +28,7 @@
         <key>CFBundleURLSchemes</key>
         <array>
           <string>com.busbooking.app</string>
+          <string>com.busbooking.app</string>
         </array>
       </dict>
     </array>
