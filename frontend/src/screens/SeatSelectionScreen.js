@@ -18,10 +18,11 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { busAPI } from '../services/api';
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
-const GRID_COLUMNS = 4;
 const GRID_GAP = 8;
 const GRID_HORIZONTAL_PADDING = 10;
 const GRID_VERTICAL_PADDING = 10;
+const MIN_SEAT_SIZE = 42;
+const MAX_SEAT_SIZE = 78;
 const BACKEND_ENFORCED_SEAT_LIMIT = 6;
 
 const NPR_TO_INR_RATE = 0.625;
@@ -575,28 +576,49 @@ const SeatSelectionScreen = ({ navigation, route }) => {
       );
     }
 
-    const fallbackGridWidth = SCREEN_WIDTH - 32 - 2;
-    const containerWidth = Math.max(1, (seatGridWidth || fallbackGridWidth) - GRID_HORIZONTAL_PADDING * 2);
-    const seatSize = Math.floor((containerWidth - GRID_GAP * (GRID_COLUMNS - 1)) / GRID_COLUMNS);
+    const fallbackGridWidth = SCREEN_WIDTH - 32;
+    const viewportWidth = Math.max(1, seatGridWidth || fallbackGridWidth);
     const minRow = deckSeats.reduce((currentMin, seat) => Math.min(currentMin, Number(seat?.row || 0)), Infinity);
     const minColumn = deckSeats.reduce((currentMin, seat) => Math.min(currentMin, Number(seat?.column || 0)), Infinity);
     const safeMinRow = Number.isFinite(minRow) ? minRow : 0;
     const safeMinColumn = Number.isFinite(minColumn) ? minColumn : 0;
+    const requiredColumns = deckSeats.reduce((maxColumns, seat) => {
+      const normalizedColumn = Math.max(0, Number(seat?.column || 0) - safeMinColumn);
+      const { columnSpan } = getSeatLayoutMeta(seat);
+      return Math.max(maxColumns, normalizedColumn + columnSpan);
+    }, 0);
     const requiredRows = deckSeats.reduce((maxRows, seat) => {
       const normalizedRow = Math.max(0, Number(seat?.row || 0) - safeMinRow);
       const { rowSpan } = getSeatLayoutMeta(seat);
       return Math.max(maxRows, normalizedRow + rowSpan);
     }, 0);
+    const safeColumnCount = Math.max(1, requiredColumns);
+    const availableGridWidth = Math.max(
+      1,
+      viewportWidth - GRID_HORIZONTAL_PADDING * 2
+    );
+    const fittedSeatSize = Math.floor(
+      (availableGridWidth - GRID_GAP * (safeColumnCount - 1)) / safeColumnCount
+    );
+    const seatSize = Math.max(
+      MIN_SEAT_SIZE,
+      Math.min(MAX_SEAT_SIZE, fittedSeatSize)
+    );
+    const gridContentWidth =
+      safeColumnCount * seatSize + Math.max(0, safeColumnCount - 1) * GRID_GAP;
+    const mapWidth = gridContentWidth + GRID_HORIZONTAL_PADDING * 2;
     const mapHeight =
       Math.max(1, requiredRows) * seatSize +
       Math.max(0, Math.max(1, requiredRows) - 1) * GRID_GAP +
       GRID_VERTICAL_PADDING * 2;
+    const cardWidth = Math.max(viewportWidth, mapWidth);
+    const shouldScrollHorizontally = cardWidth > viewportWidth;
     const gridMetrics = {
       minRow: safeMinRow,
       minColumn: safeMinColumn,
     };
 
-    return (
+    const seatMapCard = (
       <View style={styles.seatBusCard}>
         {/* FRONT + DRIVER row — inside the card boundary */}
         <View style={styles.seatMapHeaderRow}>
@@ -612,15 +634,9 @@ const SeatSelectionScreen = ({ navigation, route }) => {
         {/* Separator */}
         <View style={styles.busDivider} />
 
-        {/* Dense four-column seat grid */}
+        {/* Data-driven seat grid based on admin layout */}
         <View
-          style={[styles.seatMapGrid, { height: mapHeight }]}
-          onLayout={(e) => {
-            const { width } = e.nativeEvent.layout;
-            if (width !== seatGridWidth) {
-              setSeatGridWidth(width);
-            }
-          }}
+          style={[styles.seatMapGrid, { height: mapHeight, width: mapWidth }]}
         >
           {deckSeats
             .slice()
@@ -631,6 +647,38 @@ const SeatSelectionScreen = ({ navigation, route }) => {
             })
             .map((seat) => renderSeatBox(seat, seatSize, gridMetrics))}
         </View>
+
+        <View style={styles.busDivider} />
+        <View style={styles.seatMapFooter}>
+          <View style={styles.backBox}>
+            <Text style={styles.backText}>BACK</Text>
+          </View>
+        </View>
+      </View>
+    );
+
+    return (
+      <View
+        style={styles.seatMapViewport}
+        onLayout={(e) => {
+          const { width } = e.nativeEvent.layout;
+          if (Math.abs(width - seatGridWidth) > 1) {
+            setSeatGridWidth(width);
+          }
+        }}
+      >
+        {shouldScrollHorizontally ? (
+          <ScrollView
+            horizontal
+            bounces={false}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.seatMapScrollerContent}
+          >
+            <View style={{ width: cardWidth }}>{seatMapCard}</View>
+          </ScrollView>
+        ) : (
+          seatMapCard
+        )}
       </View>
     );
   };
@@ -1148,6 +1196,12 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginBottom: 0,
   },
+  seatMapViewport: {
+    width: '100%',
+  },
+  seatMapScrollerContent: {
+    paddingBottom: 2,
+  },
 
   deckTabsRow: {
     flexDirection: 'row',
@@ -1327,6 +1381,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    width: '100%',
     overflow: 'hidden',
     shadowColor: '#1F2937',
     shadowOffset: { width: 0, height: 2 },
@@ -1385,6 +1440,11 @@ const styles = StyleSheet.create({
     paddingTop: 10,
     paddingBottom: 10,
     marginBottom: 0,
+  },
+  seatMapFooter: {
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    backgroundColor: '#FFFFFF',
   },
   backBox: {
     width: '100%',

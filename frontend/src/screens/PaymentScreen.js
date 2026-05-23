@@ -63,6 +63,13 @@ const PaymentScreen = ({ navigation, route }) => {
     return `\n\nTicket will be emailed to your registered email: ${email}`;
   };
 
+  const getPhoneStatusNote = () => {
+    const phone = typeof primaryPassenger?.phone === 'string'
+      ? primaryPassenger.phone.trim()
+      : '';
+    return phone ? `\nPhone: ${phone}` : '';
+  };
+
   const confirmBookingForPayment = async (paymentId, token) => {
     const confirmResponse = await api.confirmPayment({ paymentId }, token);
     if (!confirmResponse?.success) {
@@ -847,13 +854,14 @@ const PaymentScreen = ({ navigation, route }) => {
       if (verificationResponse.success) {
         const confirmed = await confirmBookingForPayment(paymentData.paymentId, token);
         const emailNote = await getEmailStatusNote();
+        const phoneNote = getPhoneStatusNote();
 
         // Redirect automatically to Home after payment success
         navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
         setTimeout(() => {
           Alert.alert(
             'Payment Successful! ✅',
-            `Your booking has been confirmed!\n\nBooking Group ID: ${confirmed.bookingGroupId}${emailNote}`,
+            `Your booking has been confirmed!\n\nBooking Group ID: ${confirmed.bookingGroupId}${phoneNote}${emailNote}`,
             [{ text: 'OK' }]
           );
         }, 300);
@@ -927,13 +935,14 @@ const PaymentScreen = ({ navigation, route }) => {
       if (verificationResponse.success) {
         const confirmed = await confirmBookingForPayment(paymentData.paymentId, token);
         const emailNote = await getEmailStatusNote();
+        const phoneNote = getPhoneStatusNote();
 
         // Redirect automatically to Home after payment success
         navigation.reset({ index: 0, routes: [{ name: 'Home' }] });
         setTimeout(() => {
           Alert.alert(
             'Payment Successful! ✅',
-            `Your booking has been confirmed!\n\nBooking Group ID: ${confirmed.bookingGroupId}${emailNote}`,
+            `Your booking has been confirmed!\n\nBooking Group ID: ${confirmed.bookingGroupId}${phoneNote}${emailNote}`,
             [{ text: 'OK' }]
           );
         }, 300);
@@ -1209,6 +1218,7 @@ const PaymentScreen = ({ navigation, route }) => {
           const paymentIdToConfirm = showWebView.paymentData?.paymentId || paymentIdFromUrl;
           const confirmed = await confirmBookingForPayment(paymentIdToConfirm, showWebView.token);
           const emailNote = await getEmailStatusNote();
+          const phoneNote = getPhoneStatusNote();
 
           // Close WebView after confirmation
           resetEsewaFlowState();
@@ -1219,7 +1229,7 @@ const PaymentScreen = ({ navigation, route }) => {
           setTimeout(() => {
             Alert.alert(
               'Payment Successful! ✅',
-              `Your booking has been confirmed!\n\nBooking Group ID: ${confirmed.bookingGroupId}${emailNote}`,
+              `Your booking has been confirmed!\n\nBooking Group ID: ${confirmed.bookingGroupId}${phoneNote}${emailNote}`,
               [{ text: 'OK' }]
             );
           }, 300);
