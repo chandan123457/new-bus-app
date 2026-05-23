@@ -43,6 +43,7 @@ const PassengerInformation = ({ navigation, route }) => {
   const [actualSelectedSeats, setActualSelectedSeats] = useState(() =>
     (selectedSeats || []).map(normalizeSeat)
   );
+  const [cachedPhone, setCachedPhone] = useState('');
 
   console.log('PassengerInformation extracted data:', {
     busData: !!busData,
@@ -70,6 +71,20 @@ const PassengerInformation = ({ navigation, route }) => {
         })
         .catch(err => console.warn('Failed to recover seats from AsyncStorage:', err));
     }
+  }, []);
+
+  useEffect(() => {
+    AsyncStorage.getItem('userData')
+      .then((storedUser) => {
+        if (!storedUser) return;
+        const parsedUser = JSON.parse(storedUser);
+        const savedPhone =
+          typeof parsedUser?.phone === 'string' ? parsedUser.phone.trim() : '';
+        if (savedPhone) {
+          setCachedPhone(savedPhone);
+        }
+      })
+      .catch((err) => console.warn('Failed to load cached phone number:', err));
   }, []);
 
   // Check if selectedSeats is empty and handle the error
@@ -100,7 +115,7 @@ const PassengerInformation = ({ navigation, route }) => {
         gender: 'Male',
         seatId: seat.id,
         seatNumber: seat.seatNumber,
-        phone: '',
+        phone: cachedPhone,
       }));
     }
     return [];
@@ -109,21 +124,35 @@ const PassengerInformation = ({ navigation, route }) => {
   // Update passengers when actualSelectedSeats changes (e.g., from AsyncStorage recovery)
   useEffect(() => {
     if (actualSelectedSeats && actualSelectedSeats.length > 0) {
-      // Only update if passengers array length doesn't match seats
-      if (passengers.length !== actualSelectedSeats.length) {
+      setPassengers((currentPassengers) => {
+        if (currentPassengers.length === actualSelectedSeats.length) {
+          return currentPassengers;
+        }
+
         const initialPassengers = actualSelectedSeats.map((seat, index) => ({
-          name: passengers[index]?.name || '', // Preserve existing data if available
-          age: passengers[index]?.age || '',
-          gender: passengers[index]?.gender || 'Male',
+          name: currentPassengers[index]?.name || '', // Preserve existing data if available
+          age: currentPassengers[index]?.age || '',
+          gender: currentPassengers[index]?.gender || 'Male',
           seatId: seat.id,
           seatNumber: seat.seatNumber,
-          phone: passengers[index]?.phone || '',
+          phone: currentPassengers[index]?.phone || cachedPhone,
         }));
-        setPassengers(initialPassengers);
         console.log('Passengers updated for seat changes:', initialPassengers);
-      }
+        return initialPassengers;
+      });
     }
-  }, [actualSelectedSeats]);
+  }, [actualSelectedSeats, cachedPhone]);
+
+  useEffect(() => {
+    if (!cachedPhone) return;
+
+    setPassengers((currentPassengers) =>
+      currentPassengers.map((passenger) => ({
+        ...passenger,
+        phone: passenger.phone || cachedPhone,
+      }))
+    );
+  }, [cachedPhone]);
 
   console.log('Current passengers:', passengers);
   console.log('Current actualSelectedSeats:', actualSelectedSeats);
@@ -361,6 +390,15 @@ const PassengerInformation = ({ navigation, route }) => {
                 keyboardType="email-address"
                 value={passengers[index]?.email || ''}
                 onChangeText={(text) => updatePassenger(index, 'email', text)}
+              />
+
+              <TextInput
+                style={styles.input}
+                placeholder="Phone Number"
+                placeholderTextColor="#9CA3AF"
+                keyboardType="phone-pad"
+                value={passengers[index]?.phone || ''}
+                onChangeText={(text) => updatePassenger(index, 'phone', text)}
               />
               
               {/* Age and Gender Row */}
